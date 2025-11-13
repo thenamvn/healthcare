@@ -3,8 +3,9 @@ import { socketClient } from '@/api/socket-client';
 import { HealthMetricCard } from '@/components/health/health-metric-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useHealthAlerts } from '@/hooks/use-health-alerts';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet } from 'react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 interface HealthDataType {
   id: number;
@@ -20,6 +21,8 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [latestData, setLatestData] = useState<HealthDataType | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+  
+  const { currentAlert, alertHistory } = useHealthAlerts();
 
   useEffect(() => {
     loadData();
@@ -46,29 +49,16 @@ export default function HomeScreen() {
   const connectWebSocket = async () => {
     await socketClient.connect();
 
-    // Listen for connection status
     socketClient.on('connection', (data) => {
       console.log('🔌 Connection status:', data);
       setWsConnected(data.status === 'connected');
     });
 
-    // Listen for health updates
-    socketClient.on('health_update', (data) => {
-      console.log('📊 Received health update:', data);
-      setLatestData(data.data || data);
-    });
-
-    // Listen for crying alerts
-    socketClient.on('crying_alert', (message) => {
-      console.log('🚨 Baby is crying!', message);
+    socketClient.on('health_update', (message) => {
+      console.log('📊 Health update:', message);
       
-      // Update UI to show crying status
       if (message.data) {
-        setLatestData((prev) => ({
-          ...prev!,
-          cry_detected: true,
-          sick_detected: message.sick_detected || false,
-        }));
+        setLatestData(message.data);
       }
     });
   };
@@ -77,6 +67,30 @@ export default function HomeScreen() {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
+  };
+
+  const getAlertBanner = () => {
+    if (!currentAlert) return null;
+
+    const colors = {
+      critical: { bg: '#ffebee', text: '#c62828', border: '#f44336' },
+      warning: { bg: '#fff3e0', text: '#e65100', border: '#ff9800' },
+      info: { bg: '#e3f2fd', text: '#1565c0', border: '#2196f3' },
+    };
+
+    const style = colors[currentAlert.severity];
+
+    return (
+      <View
+        style={[
+          styles.alertBanner,
+          { backgroundColor: style.bg, borderColor: style.border },
+        ]}>
+        <ThemedText style={[styles.alertText, { color: style.text }]}>
+          {currentAlert.message}
+        </ThemedText>
+      </View>
+    );
   };
 
   if (loading) {
@@ -93,6 +107,9 @@ export default function HomeScreen() {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        
+        {getAlertBanner()}
+
         <ThemedText type="title" style={styles.title}>
           Baby Health Monitor
         </ThemedText>
@@ -105,7 +122,13 @@ export default function HomeScreen() {
                 value={latestData.temperature}
                 unit="°C"
                 icon="house.fill"
-                status={latestData.temperature > 37.5 ? 'warning' : 'normal'}
+                status={
+                  latestData.temperature > 38
+                    ? 'error'
+                    : latestData.temperature > 37.5
+                    ? 'warning'
+                    : 'normal'
+                }
               />
               <HealthMetricCard
                 title="Humidity"
@@ -121,10 +144,28 @@ export default function HomeScreen() {
               <ThemedText style={styles.stateText}>
                 {latestData.cry_detected ? '😭 Crying' : '😴 Sleeping'}
               </ThemedText>
+              
               {latestData.sick_detected && (
-                <ThemedText style={styles.sickAlert}>⚠️ Baby may be sick!</ThemedText>
+                <ThemedText style={styles.sickAlert}>
+                  {latestData.cry_detected
+                    ? '🚨 BÉ ĐANG SỐT VÀ KHÓC!'
+                    : '⚠️ Bé đang sốt (>38°C)'}
+                </ThemedText>
               )}
             </ThemedView>
+
+            {alertHistory.length > 0 && (
+              <ThemedView style={styles.historyCard}>
+                <ThemedText type="subtitle" style={styles.historyTitle}>
+                  Recent Alerts ({alertHistory.length})
+                </ThemedText>
+                {alertHistory.slice(0, 3).map((alert, index) => (
+                  <ThemedText key={index} style={styles.historyItem}>
+                    • {alert.message} ({new Date(alert.timestamp).toLocaleTimeString()})
+                  </ThemedText>
+                ))}
+              </ThemedView>
+            )}
           </>
         ) : (
           <ThemedView style={styles.noDataCard}>
@@ -139,8 +180,8 @@ export default function HomeScreen() {
           <ThemedText type="defaultSemiBold">📱 App Status</ThemedText>
           <ThemedText style={styles.infoText}>
             • Real-time monitoring: {wsConnected ? '✅ Active' : '⏳ Connecting...'}{'\n'}
-            • WebSocket: {wsConnected ? '🟢 Connected' : '🔴 Disconnected'}{'\n'}• Last update:{' '}
-            {latestData ? new Date(latestData.created_at).toLocaleTimeString() : 'Never'}
+            • WebSocket: {wsConnected ? '🟢 Connected' : '🔴 Disconnected'}{'\n'}
+            • Last update: {latestData ? new Date(latestData.created_at).toLocaleTimeString() : 'Never'}
           </ThemedText>
         </ThemedView>
       </ScrollView>
@@ -149,47 +190,33 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    gap: 20,
-  },
-  title: {
+  container: { flex: 1 },
+  scrollContent: { padding: 20, gap: 20 },
+  title: { marginBottom: 10 },
+  alertBanner: {
+    padding: 15,
+    borderRadius: 8,
+    borderWidth: 2,
     marginBottom: 10,
   },
-  metricsContainer: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  statusCard: {
-    padding: 20,
-    borderRadius: 12,
-    gap: 12,
-  },
-  stateText: {
-    fontSize: 24,
+  alertText: {
+    fontSize: 16,
+    fontWeight: '600',
     textAlign: 'center',
   },
+  metricsContainer: { flexDirection: 'row', gap: 12 },
+  statusCard: { padding: 20, borderRadius: 12, gap: 12 },
+  stateText: { fontSize: 24, textAlign: 'center' },
   sickAlert: {
     fontSize: 16,
     color: '#f44336',
     textAlign: 'center',
     fontWeight: '600',
   },
-  noDataCard: {
-    padding: 30,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  infoBox: {
-    padding: 16,
-    borderRadius: 12,
-    gap: 10,
-  },
-  infoText: {
-    opacity: 0.7,
-    lineHeight: 22,
-  },
+  historyCard: { padding: 16, borderRadius: 12, gap: 8 },
+  historyTitle: { marginBottom: 5 },
+  historyItem: { fontSize: 14, opacity: 0.8, lineHeight: 20 },
+  noDataCard: { padding: 30, borderRadius: 12, alignItems: 'center' },
+  infoBox: { padding: 16, borderRadius: 12, gap: 10 },
+  infoText: { opacity: 0.7, lineHeight: 22 },
 });

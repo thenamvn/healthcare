@@ -1,8 +1,23 @@
 import { authService } from '@/services/auth-service';
-import { WebSocketMessage } from '@/types/api.types';
 
-// Get base WS URL from env
 const WS_BASE_URL = process.env.EXPO_PUBLIC_WS_URL || 'ws://127.0.0.1:8000/ws';
+
+export type AlertSeverity = 'critical' | 'warning' | 'info';
+
+export interface HealthUpdateMessage {
+  event: 'HEALTH_UPDATE' | 'CRITICAL_ALERT' | 'FEVER_ALERT' | 'CRY_DETECTED';
+  data: {
+    id: number;
+    temperature: number;
+    humidity: number;
+    cry_detected: boolean;
+    sick_detected: boolean;
+    created_at: string;
+    notes?: string;
+  };
+  alert?: string;
+  severity?: AlertSeverity;
+}
 
 class SocketClient {
   private ws: WebSocket | null = null;
@@ -18,7 +33,6 @@ class SocketClient {
     }
 
     try {
-      // Get token and user
       const token = await authService.getToken();
       if (!token) {
         console.error('❌ No token found');
@@ -28,7 +42,6 @@ class SocketClient {
       const currentUser = await authService.getCurrentUser();
       const userId = currentUser.id;
 
-      // Build correct WebSocket URL
       const wsUrl = `${WS_BASE_URL}/${userId}?token=${token}`;
       console.log('🔌 Connecting to:', wsUrl);
 
@@ -42,7 +55,7 @@ class SocketClient {
 
       this.ws.onmessage = (event) => {
         try {
-          const message = JSON.parse(event.data);
+          const message: HealthUpdateMessage = JSON.parse(event.data);
           console.log('📨 Received:', message);
           this.handleMessage(message);
         } catch (error) {
@@ -60,7 +73,6 @@ class SocketClient {
         this.ws = null;
         this.notifyListeners('connection', { status: 'disconnected' });
 
-        // Auto-reconnect
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
           console.log(`🔄 Reconnecting (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
@@ -94,17 +106,19 @@ class SocketClient {
     }
   }
 
-  private handleMessage(message: any) {
-    const event = message.event || 'unknown';
-    
-    // Map backend events
-    const eventMap: Record<string, string> = {
-      'CRY_DETECTED': 'crying_alert',
-      'HEALTH_UPDATE': 'health_update',
-    };
+  private handleMessage(message: HealthUpdateMessage) {
+    const { event, data, alert, severity } = message;
 
-    const mappedEvent = eventMap[event] || event.toLowerCase();
-    this.notifyListeners(mappedEvent, message);
+    // Broadcast to specific event listeners
+    this.notifyListeners(event, { data, alert, severity });
+
+    // Also broadcast to generic health_update listener
+    this.notifyListeners('health_update', message);
+
+    // Handle alerts with haptics/sound
+    if (severity === 'critical' || severity === 'warning') {
+      this.notifyListeners('alert', { event, alert, severity, data });
+    }
   }
 
   private notifyListeners(event: string, data: any) {
