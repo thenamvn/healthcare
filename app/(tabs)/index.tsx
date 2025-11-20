@@ -5,7 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useHealthAlerts } from '@/hooks/use-health-alerts';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 
 interface HealthDataType {
   id: number;
@@ -22,7 +22,7 @@ export default function HomeScreen() {
   const [latestData, setLatestData] = useState<HealthDataType | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   
-  const { currentAlert, alertHistory } = useHealthAlerts();
+  const { currentAlert, alertHistory, dismissAlert } = useHealthAlerts();
 
   useEffect(() => {
     loadData();
@@ -89,8 +89,34 @@ export default function HomeScreen() {
         <ThemedText style={[styles.alertText, { color: style.text }]}>
           {currentAlert.message}
         </ThemedText>
+        <TouchableOpacity onPress={dismissAlert} style={styles.dismissButton}>
+          <ThemedText style={[styles.dismissText, { color: style.text }]}>✕</ThemedText>
+        </TouchableOpacity>
       </View>
     );
+  };
+
+  // ✅ Tính toán trạng thái thực tế từ data hiện tại
+  const getCurrentStatus = () => {
+    if (!latestData) return null;
+
+    const isSick = latestData.temperature > 38;
+    const isHighHumidity = latestData.humidity > 79;
+    const isCrying = latestData.cry_detected;
+
+    if (isSick && isCrying) {
+      return { emoji: '🚨', text: 'SỐT VÀ KHÓC!', color: '#f44336' };
+    } else if (isHighHumidity && isCrying) {
+      return { emoji: '💩', text: 'Có thể đi vệ sinh', color: '#ff9800' };
+    } else if (isSick) {
+      return { emoji: '🤒', text: 'Đang sốt', color: '#ff9800' };
+    } else if (isCrying) {
+      return { emoji: '😭', text: 'Đang khóc', color: '#2196f3' };
+    } else if (isHighHumidity) {
+      return { emoji: '💧', text: 'Có thể đi vệ sinh', color: '#2196f3' };
+    } else {
+      return { emoji: '😴', text: 'Ngủ ngon', color: '#4caf50' };
+    }
   };
 
   if (loading) {
@@ -101,6 +127,8 @@ export default function HomeScreen() {
       </ThemedView>
     );
   }
+
+  const status = getCurrentStatus();
 
   return (
     <ThemedView style={styles.container}>
@@ -135,24 +163,18 @@ export default function HomeScreen() {
                 value={latestData.humidity}
                 unit="%"
                 icon="paperplane.fill"
-                status="normal"
+                status={latestData.humidity > 80 ? 'warning' : 'normal'}
               />
             </ThemedView>
 
-            <ThemedView style={styles.statusCard}>
-              <ThemedText type="subtitle">Current State</ThemedText>
-              <ThemedText style={styles.stateText}>
-                {latestData.cry_detected ? '😭 Crying' : '😴 Sleeping'}
-              </ThemedText>
-              
-              {latestData.sick_detected && (
-                <ThemedText style={styles.sickAlert}>
-                  {latestData.cry_detected
-                    ? '🚨 BÉ ĐANG SỐT VÀ KHÓC!'
-                    : '⚠️ Bé đang sốt (>38°C)'}
+            {status && (
+              <ThemedView style={styles.statusCard}>
+                <ThemedText type="subtitle">Current State</ThemedText>
+                <ThemedText style={[styles.stateText, { color: status.color }]}>
+                  {status.emoji} {status.text}
                 </ThemedText>
-              )}
-            </ThemedView>
+              </ThemedView>
+            )}
 
             {alertHistory.length > 0 && (
               <ThemedView style={styles.historyCard}>
@@ -198,21 +220,25 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 2,
     marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   alertText: {
     fontSize: 16,
     fontWeight: '600',
-    textAlign: 'center',
+    flex: 1,
+  },
+  dismissButton: {
+    padding: 5,
+  },
+  dismissText: {
+    fontSize: 20,
+    fontWeight: 'bold',
   },
   metricsContainer: { flexDirection: 'row', gap: 12 },
   statusCard: { padding: 20, borderRadius: 12, gap: 12 },
-  stateText: { fontSize: 24, textAlign: 'center' },
-  sickAlert: {
-    fontSize: 16,
-    color: '#f44336',
-    textAlign: 'center',
-    fontWeight: '600',
-  },
+  stateText: { fontSize: 24, textAlign: 'center', fontWeight: 'bold' },
   historyCard: { padding: 16, borderRadius: 12, gap: 8 },
   historyTitle: { marginBottom: 5 },
   historyItem: { fontSize: 14, opacity: 0.8, lineHeight: 20 },

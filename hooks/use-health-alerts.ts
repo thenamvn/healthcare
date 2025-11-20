@@ -1,4 +1,4 @@
-import { socketClient, AlertSeverity, HealthUpdateMessage } from '@/api/socket-client';
+import { socketClient, AlertSeverity } from '@/api/socket-client';
 import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useState } from 'react';
@@ -19,11 +19,18 @@ export function useHealthAlerts() {
   useEffect(() => {
     const handleAlert = async (alertData: {
       event: string;
-      alert: string;
-      severity: AlertSeverity;
+      alert?: string;
+      severity?: AlertSeverity;
       data: any;
     }) => {
       console.log('🚨 Alert received:', alertData);
+
+      // ✅ Nếu không có alert message (HEALTH_UPDATE bình thường), xóa alert hiện tại
+      if (!alertData.alert || !alertData.severity) {
+        console.log('📊 Normal health update - clearing alert');
+        setCurrentAlert(null);
+        return;
+      }
 
       const newAlert: HealthAlert = {
         event: alertData.event,
@@ -34,7 +41,11 @@ export function useHealthAlerts() {
       };
 
       setCurrentAlert(newAlert);
-      setAlertHistory((prev) => [newAlert, ...prev].slice(0, 50));
+      
+      // ✅ Chỉ thêm vào history nếu là cảnh báo nghiêm trọng (critical/warning)
+      if (alertData.severity === 'critical' || alertData.severity === 'warning') {
+        setAlertHistory((prev) => [newAlert, ...prev].slice(0, 50));
+      }
 
       // Handle based on severity
       switch (alertData.severity) {
@@ -45,78 +56,80 @@ export function useHealthAlerts() {
           await handleWarningAlert(alertData.alert);
           break;
         case 'info':
-          handleInfoAlert(alertData.alert);
+          await handleInfoAlert(alertData.alert);
           break;
       }
+
+      // ✅ Auto-dismiss alert after duration
+      const dismissTime = {
+        critical: 10000,
+        warning: 7000,
+        info: 5000,
+      }[alertData.severity];
+
+      setTimeout(() => {
+        setCurrentAlert((prev) => {
+          if (prev?.timestamp === newAlert.timestamp) {
+            return null;
+          }
+          return prev;
+        });
+      }, dismissTime);
     };
 
     socketClient.on('alert', handleAlert);
+    socketClient.on('health_update', handleAlert);
 
     return () => {
       socketClient.off('alert', handleAlert);
+      socketClient.off('health_update', handleAlert);
     };
   }, []);
 
   const handleCriticalAlert = async (message: string) => {
-    // Play loud alarm
     try {
       const { sound } = await Audio.Sound.createAsync(
         require('@/assets/sounds/alarm.mp3'),
         { shouldPlay: true, isLooping: false, volume: 1.0 }
       );
-      
-      // Auto-stop after 5 seconds
       setTimeout(() => sound.unloadAsync(), 5000);
     } catch (error) {
       console.error('Failed to play alarm:', error);
     }
 
-    // Strong vibration pattern (3 times)
     for (let i = 0; i < 3; i++) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    // Show modal alert
     Alert.alert(
       '🚨 CẢNH BÁO KHẨN CẤP',
       message,
-      [
-        {
-          text: 'ĐÃ HIỂU',
-          style: 'cancel',
-        },
-      ],
+      [{ text: 'ĐÃ HIỂU', style: 'cancel' }],
       { cancelable: false }
     );
   };
 
   const handleWarningAlert = async (message: string) => {
-    // Play softer sound
     try {
       const { sound } = await Audio.Sound.createAsync(
         require('@/assets/sounds/alarm.mp3'),
         { shouldPlay: true, isLooping: false, volume: 0.6 }
       );
-      
       setTimeout(() => sound.unloadAsync(), 3000);
     } catch (error) {
       console.error('Failed to play sound:', error);
     }
 
-    // Medium vibration
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-
-    // Show alert
     Alert.alert('⚠️ Cảnh báo', message);
   };
 
-  const handleInfoAlert = (message: string) => {
-    // Light haptic only
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  const handleInfoAlert = async (message: string) => {
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     
-    // Silent notification (you can implement toast here)
-    console.log('ℹ️ Info:', message);
+    // ✅ Info alert cũng hiển thị popup nhẹ
+    Alert.alert('ℹ️ Thông báo', message, [{ text: 'OK' }]);
   };
 
   const dismissAlert = () => {
