@@ -65,6 +65,35 @@ class HealthApi {
     const response = await this.client.get('/health/stats');
     return response.data;
   }
+
+  // ✅ Chart APIs
+  async getTemperatureHumidityChart(interval: string = '1 hour', days: number = 1) {
+    const response = await this.client.get('/health/charts/temperature-humidity', {
+      params: { interval, days },
+    });
+    return response.data;
+  }
+
+  async getCryFrequencyChart(interval: string = '1 day', days: number = 7) {
+    const response = await this.client.get('/health/charts/cry-frequency', {
+      params: { interval, days },
+    });
+    return response.data;
+  }
+
+  async getHealthDistribution(days: number = 7) {
+    const response = await this.client.get('/health/charts/health-distribution', {
+      params: { days },
+    });
+    return response.data;
+  }
+
+  async getHourlyHeatmap(days: number = 7) {
+    const response = await this.client.get('/health/charts/hourly-heatmap', {
+      params: { days },
+    });
+    return response.data;
+  }
 }
 
 export const healthApi = new HealthApi();
